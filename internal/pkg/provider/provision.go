@@ -22,6 +22,8 @@ import (
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/pbm"
+	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	"go.uber.org/zap"
 
@@ -217,6 +219,61 @@ func normalizePEMCert(cert string) string {
 	return out.String()
 }
 
+// resolveStoragePolicyID looks up a vSphere Storage Policy (SPBM) by name and
+// returns its profile ID, suitable for a VirtualMachineDefinedProfileSpec.
+func (p *Provisioner) resolveStoragePolicyID(ctx context.Context, name string) (string, error) {
+	pbmClient, err := pbm.NewClient(ctx, p.vsphereClient.Client)
+	if err != nil {
+		return "", fmt.Errorf("failed to create PBM client: %w", err)
+	}
+
+	profiles, err := pbmClient.ProfileMap(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to load storage policy profiles: %w", err)
+	}
+
+	profile, ok := profiles.Name[name]
+	if !ok {
+		return "", fmt.Errorf("storage policy %q not found", name)
+	}
+
+	return profile.GetPbmProfile().ProfileId.UniqueId, nil
+}
+
+// diskProfileLocators reads the template's virtual disks and returns relocate
+// disk locators that apply the given storage profile to each disk during a clone.
+// The home-level VirtualMachineRelocateSpec.Profile does NOT cover the VMDKs, so
+// per-disk locators are required for the storage policy to land on the disks.
+func diskProfileLocators(
+	ctx context.Context,
+	template *object.VirtualMachine,
+	datastoreRef types.ManagedObjectReference,
+	profile []types.BaseVirtualMachineProfileSpec,
+) ([]types.VirtualMachineRelocateSpecDiskLocator, error) {
+	var templateMo mo.VirtualMachine
+	if err := template.Properties(ctx, template.Reference(), []string{"config.hardware.device"}, &templateMo); err != nil {
+		return nil, fmt.Errorf("failed to read template devices: %w", err)
+	}
+
+	if templateMo.Config == nil {
+		return nil, fmt.Errorf("template has no hardware configuration available")
+	}
+
+	var locators []types.VirtualMachineRelocateSpecDiskLocator
+
+	for _, dev := range templateMo.Config.Hardware.Device {
+		if disk, ok := dev.(*types.VirtualDisk); ok {
+			locators = append(locators, types.VirtualMachineRelocateSpecDiskLocator{
+				DiskId:    disk.Key,
+				Datastore: datastoreRef,
+				Profile:   profile,
+			})
+		}
+	}
+
+	return locators, nil
+}
+
 // configureNetwork configures the VM's network adapter to use the specified network.
 func configureNetwork(ctx context.Context, finder *find.Finder, vm *object.VirtualMachine, networkName string) error {
 	if networkName == "" {
@@ -320,6 +377,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 					zap.Uint("cpu", data.CPU),
 					zap.Uint("memory", data.Memory),
 					zap.Uint64("disk_size", data.DiskSize),
+					zap.String("storage_policy", data.StoragePolicy),
 					zap.Bool("ca_cert_set", data.CACert != ""),
 				)
 
@@ -423,11 +481,44 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 
 				combinedConfigB64 := base64.StdEncoding.EncodeToString(combinedConfig.Bytes())
 
+				// Resolve the optional storage policy (SPBM). When set, it is applied to
+				// both the VM home (Location.Profile) and every disk (Location.Disk), as
+				// the home profile alone does not cover the VMDKs during a clone.
+				var (
+					profileSpecs []types.BaseVirtualMachineProfileSpec
+					diskLocators []types.VirtualMachineRelocateSpecDiskLocator
+				)
+
+				if data.StoragePolicy != "" {
+					profileID, profileErr := p.resolveStoragePolicyID(ctx, data.StoragePolicy)
+					if profileErr != nil {
+						return provision.NewRetryErrorf(time.Second*10, "failed to resolve storage policy %q: %w", data.StoragePolicy, profileErr)
+					}
+
+					logger.Info(
+						"applying storage policy",
+						zap.String("name", vmName),
+						zap.String("storage_policy", data.StoragePolicy),
+						zap.String("profile_id", profileID),
+					)
+
+					profileSpecs = []types.BaseVirtualMachineProfileSpec{
+						&types.VirtualMachineDefinedProfileSpec{ProfileId: profileID},
+					}
+
+					diskLocators, err = diskProfileLocators(ctx, template, datastoreRef, profileSpecs)
+					if err != nil {
+						return provision.NewRetryErrorf(time.Second*10, "failed to build disk profile locators: %w", err)
+					}
+				}
+
 				// Clone the VM from template
 				cloneSpec := types.VirtualMachineCloneSpec{
 					Location: types.VirtualMachineRelocateSpec{
 						Pool:      &resourcePoolRef,
 						Datastore: &datastoreRef,
+						Profile:   profileSpecs,
+						Disk:      diskLocators,
 					},
 					Config: &types.VirtualMachineConfigSpec{
 						NumCPUs:  int32(data.CPU),

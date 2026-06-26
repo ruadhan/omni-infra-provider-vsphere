@@ -50,6 +50,28 @@ See [test/](./test/) for some examples, but generally:
 - Create a machine class with `omnictl apply -f machineclass.yaml`
 - Create a cluster that uses the machine class with `omnictl cluster template sync -f cluster-template.yaml`
 
+### Machine class provider data
+
+The `providerdata` block of the machine class accepts the following fields:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `datacenter` | yes | vSphere datacenter name |
+| `resource_pool` | yes | Resource pool to place the VM in |
+| `datastore` | yes | Datastore to clone the VM onto |
+| `network` | yes | Network to attach the VM's adapter to |
+| `template` | yes | Name of the OVA template to clone from |
+| `cpu` | yes | Number of vCPUs |
+| `memory` | yes | Memory in MB |
+| `disk_size` | yes | Boot disk size in GB |
+| `folder` | no | VM folder path |
+| `storage_policy` | no | Name of a vSphere Storage Policy (SPBM) applied to the VM home and disks; the datastore default policy is used when omitted |
+| `ca_cert` | no | PEM-encoded CA certificate to add to the node's trusted roots |
+
+When `storage_policy` is set, the named policy is resolved against vCenter and applied to both the VM home and every disk during the clone.
+This lets you, for example, give control plane (etcd) disks a Storage Policy with a higher Storage I/O Control share or reservation than worker disks.
+Provisioning fails with a clear error if the named policy does not exist.
+
 ## Development
 
 See `make help` for general build info.
