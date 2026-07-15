@@ -12,14 +12,17 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
+	"github.com/siderolabs/omni/client/pkg/omni/resources/omni"
 	"github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/stdpatches"
 	"github.com/vmware/govmomi"
+	"github.com/vmware/govmomi/fault"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/pbm"
@@ -274,6 +277,51 @@ func diskProfileLocators(
 	return locators, nil
 }
 
+// clusterFolderName derives a best-effort cluster name from an Omni machine
+// request set ID. The machine request set ID equals the machine set ID
+// ("<cluster>-<machine set suffix>"); the default control plane and worker
+// suffixes are stripped to recover the cluster name. Custom-named machine sets
+// keep the full ID, as the cluster name cannot be reliably separated from it.
+func clusterFolderName(requestSetID string) string {
+	for _, suffix := range []string{omni.ControlPlanesIDSuffix, omni.DefaultWorkersIDSuffix} {
+		if cluster, ok := strings.CutSuffix(requestSetID, "-"+suffix); ok && cluster != "" {
+			return cluster
+		}
+	}
+
+	return requestSetID
+}
+
+// ensureSubfolder returns the child folder of parent with the given name,
+// creating it when it does not exist. A creation race between concurrently
+// provisioned machines of the same cluster is resolved by re-finding the folder.
+func ensureSubfolder(ctx context.Context, finder *find.Finder, parent *object.Folder, name string) (*object.Folder, error) {
+	childPath := path.Join(parent.InventoryPath, name)
+
+	sub, err := finder.Folder(ctx, childPath)
+	if err == nil {
+		return sub, nil
+	}
+
+	var notFoundErr *find.NotFoundError
+	if !errors.As(err, &notFoundErr) {
+		return nil, fmt.Errorf("failed to look up folder %q: %w", childPath, err)
+	}
+
+	sub, err = parent.CreateFolder(ctx, name)
+	if err != nil {
+		if fault.Is(err, &types.DuplicateName{}) {
+			return finder.Folder(ctx, childPath)
+		}
+
+		return nil, fmt.Errorf("failed to create folder %q: %w", childPath, err)
+	}
+
+	sub.SetInventoryPath(childPath)
+
+	return sub, nil
+}
+
 // configureNetwork configures the VM's network adapter to use the specified network.
 func configureNetwork(ctx context.Context, finder *find.Finder, vm *object.VirtualMachine, networkName string) error {
 	if networkName == "" {
@@ -378,6 +426,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 					zap.Uint("memory", data.Memory),
 					zap.Uint64("disk_size", data.DiskSize),
 					zap.String("storage_policy", data.StoragePolicy),
+					zap.Bool("cluster_folder", data.ClusterFolder),
 					zap.Bool("ca_cert_set", data.CACert != ""),
 				)
 
@@ -405,6 +454,23 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 					folder, err = finder.DefaultFolder(ctx)
 					if err != nil {
 						return provision.NewRetryErrorf(time.Second*10, "failed to find default VM folder: %w", err)
+					}
+				}
+
+				// Optionally place the VM in a per-cluster subfolder, creating it if needed.
+				if data.ClusterFolder {
+					requestSetID, ok := pctx.GetMachineRequestSetID()
+					if !ok {
+						return fmt.Errorf("cluster_folder is enabled, but the machine request has no machine request set label")
+					}
+
+					folderName := clusterFolderName(requestSetID)
+
+					logger.Info("using cluster folder", zap.String("name", vmName), zap.String("cluster_folder", folderName))
+
+					folder, err = ensureSubfolder(ctx, finder, folder, folderName)
+					if err != nil {
+						return provision.NewRetryErrorf(time.Second*10, "failed to ensure cluster folder %q: %w", folderName, err)
 					}
 				}
 
