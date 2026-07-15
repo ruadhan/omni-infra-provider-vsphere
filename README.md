@@ -65,12 +65,18 @@ The `providerdata` block of the machine class accepts the following fields:
 | `memory` | yes | Memory in MB |
 | `disk_size` | yes | Boot disk size in GB |
 | `folder` | no | VM folder path |
+| `cluster_folder` | no | When `true`, VMs are placed in a subfolder named after the cluster, created automatically under `folder` (or the datacenter VM folder) |
 | `storage_policy` | no | Name of a vSphere Storage Policy (SPBM) applied to the VM home and disks; the datastore default policy is used when omitted |
 | `ca_cert` | no | PEM-encoded CA certificate to add to the node's trusted roots |
 
 When `storage_policy` is set, the named policy is resolved against vCenter and applied to both the VM home and every disk during the clone.
 This lets you, for example, give control plane (etcd) disks a Storage Policy with a higher Storage I/O Control share or reservation than worker disks.
 Provisioning fails with a clear error if the named policy does not exist.
+
+When `cluster_folder` is set to `true`, the provider creates (if needed) a VM folder for each cluster and clones the VMs into it.
+The folder name is derived from the Omni machine set backing the request: the default `-control-planes` and `-workers` suffixes are stripped, so both machine sets of a cluster share one folder named after the cluster.
+The exact cluster name is not available to infrastructure providers at provision time, so for custom-named worker machine sets the folder is named after the full machine set (e.g. `mycluster-storage-nodes`).
+Folders are not removed on deprovision.
 
 ## Development
 

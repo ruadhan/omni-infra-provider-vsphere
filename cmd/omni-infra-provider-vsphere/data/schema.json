@@ -39,6 +39,10 @@
       "type": "string",
       "description": "VM folder path (optional, defaults to datacenter VM folder)"
     },
+    "cluster_folder": {
+      "type": "boolean",
+      "description": "Place VMs in a subfolder named after the cluster (best-effort, derived from the machine set name), created automatically under the folder above (or the datacenter VM folder)"
+    },
     "ca_cert": {
       "type": "string",
       "description": "PEM-encoded CA certificate(s) to trust on the machine. Provide the full certificate block including BEGIN/END lines. Multiple certificates can be concatenated."

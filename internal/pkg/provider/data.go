@@ -13,8 +13,14 @@ type Data struct {
 	// cloned VM (home and disks). Optional; when empty the datastore default policy is used.
 	StoragePolicy string `yaml:"storage_policy"`
 	Network       string `yaml:"network"`
-	Template      string `yaml:"template"`  // VM template name to clone from
-	Folder        string `yaml:"folder"`    // VM folder path (optional)
+	Template      string `yaml:"template"` // VM template name to clone from
+	Folder        string `yaml:"folder"`   // VM folder path (optional)
+	// ClusterFolder, when true, places the VM in a subfolder (under Folder, or the
+	// datacenter VM folder) named after the cluster. The name is best-effort: it is
+	// derived from the Omni machine request set ID by stripping the default
+	// "-control-planes"/"-workers" machine set suffixes; custom-named machine sets
+	// get a folder named after the full machine set ID. Missing folders are created.
+	ClusterFolder bool   `yaml:"cluster_folder"`
 	CACert        string `yaml:"ca_cert"`   // PEM-encoded CA certificate (optional)
 	DiskSize      uint64 `yaml:"disk_size"` // GiB
 	CPU           uint   `yaml:"cpu"`
