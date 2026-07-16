@@ -46,6 +46,13 @@
     "ca_cert": {
       "type": "string",
       "description": "PEM-encoded CA certificate(s) to trust on the machine. Provide the full certificate block including BEGIN/END lines. Multiple certificates can be concatenated."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "vCenter tags to attach to the VM (optional). Each entry is a tag name, or \"category/name\" when the tag name exists in multiple categories. Tags must already exist in vCenter."
     }
   },
   "required": [

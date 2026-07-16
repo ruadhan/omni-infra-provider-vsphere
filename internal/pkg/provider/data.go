@@ -13,12 +13,16 @@ type Data struct {
 	// cloned VM (home and disks). Optional; when empty the datastore default policy is used.
 	StoragePolicy string `yaml:"storage_policy"`
 	Network       string `yaml:"network"`
-	Template      string `yaml:"template"`  // VM template name to clone from
-	Folder        string `yaml:"folder"`    // VM folder path (optional)
-	CACert        string `yaml:"ca_cert"`   // PEM-encoded CA certificate (optional)
-	DiskSize      uint64 `yaml:"disk_size"` // GiB
-	CPU           uint   `yaml:"cpu"`
-	Memory        uint   `yaml:"memory"` // MiB
+	Template      string `yaml:"template"` // VM template name to clone from
+	Folder        string `yaml:"folder"`   // VM folder path (optional)
+	CACert        string `yaml:"ca_cert"`  // PEM-encoded CA certificate (optional)
+	// Tags lists vCenter tags to attach to the VM after cloning. Each entry is a
+	// tag name, or "category/name" when the tag name is not unique across
+	// categories. All tags (and categories) must already exist in vCenter.
+	Tags     []string `yaml:"tags"`
+	DiskSize uint64   `yaml:"disk_size"` // GiB
+	CPU      uint     `yaml:"cpu"`
+	Memory   uint     `yaml:"memory"` // MiB
 	// ClusterFolder, when true, places the VM in a subfolder (under Folder, or the
 	// datacenter VM folder) named after the cluster. The name is best-effort: it is
 	// derived from the Omni machine request set ID by stripping the default

@@ -68,6 +68,7 @@ The `providerdata` block of the machine class accepts the following fields:
 | `cluster_folder` | no | When `true`, VMs are placed in a subfolder named after the cluster, created automatically under `folder` (or the datacenter VM folder) |
 | `storage_policy` | no | Name of a vSphere Storage Policy (SPBM) applied to the VM home and disks; the datastore default policy is used when omitted |
 | `ca_cert` | no | PEM-encoded CA certificate to add to the node's trusted roots |
+| `tags` | no | List of vCenter tags to attach to the VM; each entry is a tag name, or `category/name` when the tag name is not unique across categories |
 
 When `storage_policy` is set, the named policy is resolved against vCenter and applied to both the VM home and every disk during the clone.
 This lets you, for example, give control plane (etcd) disks a Storage Policy with a higher Storage I/O Control share or reservation than worker disks.
@@ -77,6 +78,12 @@ When `cluster_folder` is set to `true`, the provider creates (if needed) a VM fo
 The folder name is derived from the Omni machine set backing the request: the default `-control-planes` and `-workers` suffixes are stripped, so both machine sets of a cluster share one folder named after the cluster.
 The exact cluster name is not available to infrastructure providers at provision time, so for custom-named worker machine sets the folder is named after the full machine set (e.g. `mycluster-storage-nodes`).
 Folders are not removed on deprovision.
+
+When `tags` is set, each named tag is resolved against vCenter and attached to the VM after cloning, before power-on.
+This lets external tooling that keys off vCenter tags (for example backup software assigning VMs to backup policies) pick up the machines without manual tagging.
+The tags and their categories must already exist in vCenter; the provider does not create them.
+A plain tag name must be unique across categories — use the `category/name` form to disambiguate.
+Provisioning fails with a clear error if a tag cannot be resolved.
 
 ## Development
 

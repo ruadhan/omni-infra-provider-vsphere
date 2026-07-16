@@ -639,6 +639,54 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 			},
 		),
 		provision.NewStep(
+			"attachTags",
+			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
+				// Unmarshal provider-specific configuration
+				var data Data
+				if err := pctx.UnmarshalProviderData(&data); err != nil {
+					return fmt.Errorf("failed to unmarshal provider data: %w", err)
+				}
+
+				if len(data.Tags) == 0 {
+					return nil
+				}
+
+				// Ensure session is active
+				if err := p.ensureSession(ctx); err != nil {
+					return provision.NewRetryErrorf(time.Second*10, "failed to ensure vSphere session: %w", err)
+				}
+
+				vmName := pctx.State.TypedSpec().Value.VmName
+				if vmName == "" {
+					return provision.NewRetryErrorf(time.Second*10, "waiting for VM to be created")
+				}
+
+				finder := find.NewFinder(p.vsphereClient.Client, true)
+
+				// Find the datacenter
+				dc, err := finder.Datacenter(ctx, data.Datacenter)
+				if err != nil {
+					return provision.NewRetryErrorf(time.Second*10, "failed to find datacenter %q: %w", data.Datacenter, err)
+				}
+
+				finder.SetDatacenter(dc)
+
+				// Find the VM
+				vm, err := finder.VirtualMachine(ctx, vmName)
+				if err != nil {
+					return provision.NewRetryErrorf(time.Second*10, "failed to find VM %q: %w", vmName, err)
+				}
+
+				logger.Info("attaching vCenter tags", zap.String("name", vmName), zap.Strings("tags", data.Tags))
+
+				if err := p.attachTags(ctx, vm.Reference(), data.Tags); err != nil {
+					return provision.NewRetryErrorf(time.Second*10, "failed to attach tags to VM %q: %w", vmName, err)
+				}
+
+				return nil
+			},
+		),
+		provision.NewStep(
 			"powerOnVM",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
 				// Ensure session is active
